@@ -34,6 +34,9 @@ Repository con due progetti separati per InitVerse (inihash / VersaHash):
 
 # Release solo gpuminer
 ./build-linux.sh release x86_64-unknown-linux-gnu gpuminer
+
+# Release gpuminer con backend CUDA (richiede nvcc)
+./build-linux.sh release x86_64-unknown-linux-gnu gpuminer cuda
 ```
 
 Il binario sarà disponibile in:
@@ -95,6 +98,12 @@ cpuminer stratum+tcp://0x...Wallet.Worker001@pool-a.yatespool.com:31588 8
 gpuminer scan <seal_hash_hex> <extra_nonce_hex> <target_hex> [start_nonce] [count]
 ```
 
+Con feature CUDA (`--features cuda`) il gpuminer usa una pipeline ibrida:
+- **GPU**: calcolo batch di `first_hash`, `key_hash`, `sign_data = SHA256(key_hash)`.
+- **CPU**: firma Schnorr chain-compatible + hash finale + confronto target.
+
+Questo mantiene la compatibilità con il chain, evitando divergenze crittografiche.
+
 ## Architettura
 
 Il repository è organizzato in due crate:
@@ -134,6 +143,14 @@ Il miner è ottimizzato per massime prestazioni:
 - **Codegen units**: Impostato a 1 per ottimizzazioni migliori
 - **Opt level**: 3 per massime ottimizzazioni
 - **Multi-threading**: Supporto nativo per mining parallelo
+
+## CI: binari Linux automatici
+
+La pipeline GitHub Actions (`Linux Build & Test`) ora:
+- compila in release `cpuminer` e `gpuminer`,
+- esegue i test workspace,
+- pubblica gli eseguibili Linux come artifact (`cpuminer-linux-x86_64`, `gpuminer-linux-x86_64`),
+- su tag (`v*`) allega i binari direttamente alla release GitHub.
 
 ## Dipendenze
 

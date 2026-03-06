@@ -210,9 +210,17 @@ pub fn versa_hash(data: &[u8], nonce: &[u8; 8], extra_nonce: &[u8; 8]) -> [u8; 3
     let first_hash: [u8; 32] = Sha256::digest(&new_data).into();
     let key_hash: [u8; 32] = Sha256::digest(&first_hash).into();
     let sign_data: [u8; 32] = Sha256::digest(&key_hash).into();
+    versa_hash_from_key_material(&key_hash, &sign_data)
+}
 
-    let sig = schnorr_sign(&key_hash, &sign_data);
-
+/// Calcola la parte finale di VersaHash a partire dal materiale già preparato:
+/// - key_hash = SHA256(first_hash)
+/// - sign_data = SHA256(key_hash)
+///
+/// Utile per pipeline ibride (es. precomputo su GPU, firma/finalizzazione su CPU)
+/// mantenendo output identico all'implementazione chain.
+pub fn versa_hash_from_key_material(key_hash: &[u8; 32], sign_data: &[u8; 32]) -> [u8; 32] {
+    let sig = schnorr_sign(key_hash, sign_data);
     let end_hash: [u8; 32] = Sha256::digest(&sig).into();
     let mut result = end_hash;
     result.reverse(); // byte-reverse come nel Go

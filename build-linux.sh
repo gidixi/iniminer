@@ -5,6 +5,7 @@
 #   ./build-linux.sh debug
 #   ./build-linux.sh release x86_64-unknown-linux-gnu cpuminer
 #   ./build-linux.sh release x86_64-unknown-linux-gnu gpuminer
+#   ./build-linux.sh release x86_64-unknown-linux-gnu gpuminer cuda
 
 set -euo pipefail
 
@@ -24,6 +25,7 @@ fi
 PROFILE="${1:-release}"
 TARGET="${2:-$(rustc -vV | sed -n 's/^host: //p')}"
 PROJECT="${3:-all}"
+GPU_BACKEND="${4:-cpu}"
 
 case "$PROFILE" in
   release|debug) ;;
@@ -42,6 +44,19 @@ case "$PROJECT" in
     exit 1
     ;;
 esac
+
+case "$GPU_BACKEND" in
+  cpu|cuda) ;;
+  *)
+    echo "Backend GPU non valido: $GPU_BACKEND (usa 'cpu' o 'cuda')." >&2
+    exit 1
+    ;;
+esac
+
+if [[ "$PROJECT" != "gpuminer" && "$GPU_BACKEND" == "cuda" ]]; then
+  echo "Il backend 'cuda' è valido solo con progetto gpuminer." >&2
+  exit 1
+fi
 
 TARGET_INSTALLED=false
 while IFS= read -r INSTALLED_TARGET; do
@@ -63,13 +78,20 @@ elif [[ "$PROJECT" == "cpuminer" ]]; then
   BUILD_ARGS+=(-p cpuminer)
 else
   BUILD_ARGS+=(-p gpuminer)
+  if [[ "$GPU_BACKEND" == "cuda" ]]; then
+    if ! command -v nvcc >/dev/null 2>&1; then
+      echo "Errore: nvcc non trovato, impossibile compilare gpuminer con backend CUDA." >&2
+      exit 1
+    fi
+    BUILD_ARGS+=(--features cuda)
+  fi
 fi
 
 if [[ "$PROFILE" == "release" ]]; then
   BUILD_ARGS+=(--release)
 fi
 
-echo "Compilo progetto=$PROJECT ($PROFILE) per target $TARGET..."
+echo "Compilo progetto=$PROJECT backend=$GPU_BACKEND ($PROFILE) per target $TARGET..."
 cargo "${BUILD_ARGS[@]}"
 
 if [[ "$PROJECT" == "all" || "$PROJECT" == "cpuminer" ]]; then
