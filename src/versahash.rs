@@ -241,6 +241,27 @@ mod tests {
     }
 
     #[test]
+    fn key_material_path_matches_full_versa_hash() {
+        let data = [9u8; 32];
+        let nonce = [1u8; 8];
+        let extra = [2u8; 8];
+
+        let mut new_data = Vec::with_capacity(data.len() + 1 + 16);
+        new_data.extend_from_slice(&data);
+        new_data.push((nonce.len() + extra.len()) as u8);
+        new_data.extend_from_slice(&nonce);
+        new_data.extend_from_slice(&extra);
+
+        let first_hash: [u8; 32] = Sha256::digest(&new_data).into();
+        let key_hash: [u8; 32] = Sha256::digest(&first_hash).into();
+        let sign_data: [u8; 32] = Sha256::digest(&key_hash).into();
+
+        let full = versa_hash(&data, &nonce, &extra);
+        let via_key_material = versa_hash_from_key_material(&key_hash, &sign_data);
+        assert_eq!(full, via_key_material);
+    }
+
+    #[test]
     fn different_nonces_differ() {
         let r1 = versa_hash(&[1u8; 32], &[0u8; 8], &[0u8; 8]);
         let r2 = versa_hash(&[1u8; 32], &[0, 0, 0, 0, 0, 0, 0, 1], &[0u8; 8]);

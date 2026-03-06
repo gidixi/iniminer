@@ -98,6 +98,16 @@ cpuminer stratum+tcp://0x...Wallet.Worker001@pool-a.yatespool.com:31588 8
 gpuminer scan <seal_hash_hex> <extra_nonce_hex> <target_hex> [start_nonce] [count]
 ```
 
+### gpuminer — mining diretto (RPC) e pool
+
+```bash
+# mining diretto
+gpuminer [RPC_URL] [BATCH_SIZE] [EXTRA_NONCE_HEX]
+
+# pool
+gpuminer stratum+tcp://WALLET.WORKER@host:port [BATCH_SIZE]
+```
+
 Con feature CUDA (`--features cuda`) il gpuminer usa una pipeline ibrida:
 - **GPU**: calcolo batch di `first_hash`, `key_hash`, `sign_data = SHA256(key_hash)`.
 - **CPU**: firma Schnorr chain-compatible + hash finale + confronto target.
