@@ -160,6 +160,7 @@ impl StratumClient {
             params,
         };
         let line = serde_json::to_string(&req)? + "\n";
+        println!("[stratum] >> {} (id={})", method, id);
         self.stream.write_all(line.as_bytes())?;
         self.stream.flush()?;
         Ok(id)
@@ -173,9 +174,10 @@ impl StratumClient {
             let _ = Self::reader_loop(stream_reader, job_arc);
         });
         self.send_request("mining.subscribe", Some(serde_json::json!([])))?;
+        // Password: "" o "x" a seconda della pool
         self.send_request(
             "mining.authorize",
-            Some(serde_json::json!([self.user.clone(), "x"])),
+            Some(serde_json::json!([self.user.clone(), ""])),
         )?;
         for _ in 0..30 {
             thread::sleep(Duration::from_secs(1));
@@ -203,21 +205,39 @@ impl StratumClient {
             if line.is_empty() {
                 continue;
             }
+            // Debug: mostra cosa invia la pool (per adattare il parser)
+            let preview = if line.len() > 200 { format!("{}...", &line[..200]) } else { line.to_string() };
+            println!("[stratum] << {}", preview);
             let msg: StratumResponse = match serde_json::from_str(line) {
                 Ok(m) => m,
-                Err(_) => continue,
+                Err(e) => {
+                    eprintln!("[stratum] parse err: {}", e);
+                    continue;
+                }
             };
+            if let Some(ref err) = msg.error {
+                let code = err.get("code").and_then(|c| c.as_i64()).unwrap_or(0);
+                let msg_str = err.get("message").and_then(|m| m.as_str()).unwrap_or("?");
+                eprintln!("[stratum] errore server: code={} message={}", code, msg_str);
+                if msg_str.contains("Internal") && msg.id == Some(2) {
+                    eprintln!("[stratum] hint: prova worker name valido (es. Worker001 invece di WORKER)");
+                }
+            }
             if let Some(method) = &msg.method {
                 if method == "mining.notify" {
-                    if let Some(Value::Array(params)) = msg.params {
+                    if let Some(Value::Array(params)) = msg.params.clone() {
                         match parse_notify_params(&params) {
                             Ok(job) => {
                                 *current_job.lock().unwrap() = Some(job.clone());
                                 println!("[stratum] nuovo job: {}", job.job_id);
                             }
-                            Err(e) => eprintln!("[warn] mining.notify: {}", e),
+                            Err(e) => eprintln!("[warn] mining.notify parse: {} (params len={})", e, params.len()),
                         }
+                    } else {
+                        eprintln!("[warn] mining.notify params non è array");
                     }
+                } else {
+                    eprintln!("[stratum] method={} (ignorato)", method);
                 }
             }
         }
