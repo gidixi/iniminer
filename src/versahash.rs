@@ -12,8 +12,8 @@
 /// - **VersaHash** (crypto/versaHash/versaHash.go): newData = data || byte(len(nonce)+len(extraNonce)) || nonce || extraNonce;
 ///   firstHash=SHA256(newData); keyHash=SHA256(firstHash); signData=SHA256(keyHash); sig=Schnorr(keyHash, signData);
 ///   endHash=SHA256(sig); return reverse(endHash).
-/// - **Schnorr** (crypto/versaHash/schnorr.go): getE(Px,Py,rX,m) = SHA256(rX || Marshal_compressed(P) || m) mod N;
-///   getK(Ry,k0) = k0 se Jacobi(Ry,P)==1 altrimenti N-k0. Tag RFC6979: "Schnorr+SHA256  " (16 byte).
+/// - **Schnorr** (crypto/versaHash/schnorr.go): e = SHA256(rX || Marshal_compressed(P) || m) mod N,
+///   con nonce RFC6979 deterministico basato su (private_key, message).
 ///
 /// Nessuna dipendenza da num-bigint: tutto il lavoro aritmetico usa
 /// k256::Scalar (mod N) e k256::FieldElement (mod P) direttamente.
@@ -21,7 +21,7 @@
 use hmac::{Hmac, Mac};
 use k256::{
     elliptic_curve::{sec1::ToEncodedPoint, PrimeField},
-    AffinePoint, FieldBytes, FieldElement, ProjectivePoint, Scalar,
+    AffinePoint, FieldBytes, ProjectivePoint, Scalar,
 };
 use sha2::{Digest, Sha256};
 
@@ -66,67 +66,52 @@ fn bytes_to_scalar(bytes: [u8; 32]) -> Option<Scalar> {
     Option::from(Scalar::from_repr(FieldBytes::from(bytes)))
 }
 
-// ─── Jacobi: residuo quadratico mod P via FieldElement::sqrt ─────────────────
-
-/// Restituisce true se y è un residuo quadratico mod P  (Jacobi(y,P) == 1).
-/// Usa l'operazione sqrt() ottimizzata di k256 (P ≡ 3 mod 4 ⟹ sqrt = y^((P+1)/4)).
-/// Molto più veloce di BigUint::modpow con esponente a 256 bit.
-fn is_quadratic_residue(y_bytes: &[u8; 32]) -> bool {
-    let fb = FieldBytes::from(*y_bytes);
-    // and_then propaga None se from_bytes fallisce O se sqrt non esiste (non-QR)
-    bool::from(FieldElement::from_bytes(&fb).and_then(|fe| fe.sqrt()).is_some())
-}
-
 // ─── HMAC-SHA256 helper ───────────────────────────────────────────────────────
-
-fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> Vec<u8> {
-    let mut h = HmacSha256::new_from_slice(key).unwrap();
-    for p in parts {
-        h.update(p);
-    }
-    h.finalize().into_bytes().to_vec()
-}
 
 // ─── RFC 6979 — nonce deterministico ─────────────────────────────────────────
 //
-// Implementa generateSecret da rfc6979.go con:
-//   - tag "Schnorr+SHA256  " (16 byte)
-//   - qlen = holen = rolen = 32 (SHA-256, secp256k1)
-// Ritorna direttamente un Scalar (< N, != 0): nessuna conversione BigUint.
-
+// Replica del flusso richiesto: seed = private_key || message.
 fn rfc6979_nonce(private_key: &[u8; 32], message: &[u8; 32]) -> Scalar {
-    // bx = private_key(32) || bits2octets(message)(32) || "Schnorr+SHA256  "(16)
-    let b2o = bits2octets(message);
-    let schnorr_tag = b"Schnorr+SHA256  "; // 16 byte esatti
-    let mut bx = [0u8; 80];
-    bx[..32].copy_from_slice(private_key);
-    bx[32..64].copy_from_slice(&b2o);
-    bx[64..].copy_from_slice(schnorr_tag);
+    // RFC6979 sezione 3.2
+    let mut v = [0x01u8; 32];
+    let mut k = [0x00u8; 32];
 
-    let mut v = vec![0x01u8; 32];
-    let mut k = vec![0x00u8; 32];
+    // K = HMAC_K(V || 0x00 || privkey || message)
+    let mut mac = HmacSha256::new_from_slice(&k).unwrap();
+    mac.update(&v);
+    mac.update(&[0x00]);
+    mac.update(private_key);
+    mac.update(message);
+    k = mac.finalize().into_bytes().into();
 
-    // Steps D–G dell'RFC 6979 §3.2
-    k = hmac_sha256(&k, &[&v, &[0x00], &bx]);
-    v = hmac_sha256(&k, &[&v]);
-    k = hmac_sha256(&k, &[&v, &[0x01], &bx]);
-    v = hmac_sha256(&k, &[&v]);
+    // V = HMAC_K(V)
+    let mut mac = HmacSha256::new_from_slice(&k).unwrap();
+    mac.update(&v);
+    v = mac.finalize().into_bytes().into();
 
-    // Step H: per qlen=256 e HMAC-SHA256, t è sempre esattamente un output (32 byte).
-    // Usiamo Scalar::from_repr per il range-check 0 < secret < N, senza BigUint.
-    loop {
-        v = hmac_sha256(&k, &[&v]);
-        let t: [u8; 32] = v.as_slice().try_into().unwrap();
+    // K = HMAC_K(V || 0x01 || privkey || message)
+    let mut mac = HmacSha256::new_from_slice(&k).unwrap();
+    mac.update(&v);
+    mac.update(&[0x01]);
+    mac.update(private_key);
+    mac.update(message);
+    k = mac.finalize().into_bytes().into();
 
-        // from_repr ritorna None se t >= N; se t == 0 from_repr ritorna Some(ZERO)
-        if t != [0u8; 32] {
-            if let Some(s) = bytes_to_scalar(t) {
-                return s;
-            }
-        }
+    // V = HMAC_K(V)
+    let mut mac = HmacSha256::new_from_slice(&k).unwrap();
+    mac.update(&v);
+    v = mac.finalize().into_bytes().into();
 
-        k = hmac_sha256(&k, &[&v, &[0x00]]);
-        v = hmac_sha256(&k, &[&v]);
+    // nonce = HMAC_K(V)
+    let mut mac = HmacSha256::new_from_slice(&k).unwrap();
+    mac.update(&v);
+    let result: [u8; 32] = mac.finalize().into_bytes().into();
+
+    if let Some(s) = bytes_to_scalar(result) {
+        s
+    } else {
+        let reduced = bits2octets(&result);
+        bytes_to_scalar(reduced).unwrap_or(Scalar::ZERO)
     }
 }
 
@@ -159,23 +144,13 @@ fn schnorr_sign(private_key: &[u8; 32], message: &[u8; 32]) -> [u8; 64] {
         }
     };
 
-    let k0_scalar = rfc6979_nonce(private_key, message);
+    let k_scalar = rfc6979_nonce(private_key, message);
 
-    // R = k0 * G
-    let r_affine = (ProjectivePoint::GENERATOR * k0_scalar).to_affine();
-    let r_enc = r_affine.to_encoded_point(false); // uncompressed per estrarre y
-    // coercion esplicita &FieldBytes → &[u8] tramite Deref, evita ambiguità as_ref()
+    // R = k * G
+    let r_affine = (ProjectivePoint::GENERATOR * k_scalar).to_affine();
+    let r_enc = r_affine.to_encoded_point(false);
     let x_slice: &[u8] = r_enc.x().unwrap();
     let rx_bytes: [u8; 32] = x_slice.try_into().unwrap();
-    let y_slice: &[u8] = r_enc.y().unwrap();
-    let ry_bytes: [u8; 32] = y_slice.try_into().unwrap();
-
-    // k = k0 se Jacobi(Ry, P) == 1, altrimenti k = N - k0
-    let k_scalar = if is_quadratic_residue(&ry_bytes) {
-        k0_scalar
-    } else {
-        -k0_scalar // Neg::neg ≡ N - k0_scalar in Scalar field
-    };
 
     // P = d * G  (chiave pubblica)
     let p_affine = (ProjectivePoint::GENERATOR * d_scalar).to_affine();
@@ -343,8 +318,8 @@ mod tests {
                 continue;
             }
             let rlp_cut = &raw[..raw.len() - strip];
-            use sha2::{Digest, Sha256};
-            use sha3::{Digest as Sha3Digest, Keccak256};
+            use sha2::Sha256;
+            use sha3::Keccak256;
             let s256: [u8; 32] = Sha256::digest(rlp_cut).into();
             let k256: [u8; 32] = Keccak256::digest(rlp_cut).into();
             println!("strip {}: SHA256={} Keccak256={}", strip, hex::encode(s256), hex::encode(k256));
