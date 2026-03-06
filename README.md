@@ -108,7 +108,11 @@ gpuminer [RPC_URL] [BATCH_SIZE] [EXTRA_NONCE_HEX]
 gpuminer stratum+tcp://WALLET.WORKER@host:port [BATCH_SIZE]
 ```
 
-Con feature CUDA (`--features cuda`) il gpuminer usa una pipeline ibrida:
+Con feature CUDA (`--features cuda`) il gpuminer supporta due modalità:
+- `GPUMINER_CUDA_MODE=full` (default): tenta il percorso full-offload su GPU.
+- `GPUMINER_CUDA_MODE=hybrid`: usa pipeline ibrida.
+
+Pipeline ibrida:
 - **GPU**: calcolo batch di `first_hash`, `key_hash`, `sign_data = SHA256(key_hash)`.
 - **CPU**: firma Schnorr chain-compatible + hash finale + confronto target.
 
