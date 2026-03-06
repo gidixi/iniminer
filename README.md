@@ -20,10 +20,19 @@ Miner esterno ad alte prestazioni per InitVerse (inihash / VersaHash) scritto in
 ### Build per Linux
 
 ```bash
+# Release (default)
 ./build-linux.sh
+
+# Debug
+./build-linux.sh debug
+
+# Release per target specifico
+./build-linux.sh release x86_64-unknown-linux-gnu
 ```
 
-Il binario sarà disponibile in `target/release/miner`.
+Il binario sarà disponibile in:
+- `target/<target-triple>/release/miner` (release)
+- `target/<target-triple>/debug/miner` (debug)
 
 ### Build manuale
 
