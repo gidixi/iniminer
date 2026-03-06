@@ -55,9 +55,11 @@ fn main() {
         .map(|v| v != "0")
         .unwrap_or(true);
     if patch_math {
-        if let Some(compat_dir) = create_cuda_math_compat_include(&out_dir) {
-            nvcc_args.push("-I".to_string());
-            nvcc_args.push(compat_dir.to_string_lossy().to_string());
+        if let Some(patched_header) = create_cuda_math_compat_header(&out_dir) {
+            // Forza l'inclusione del file patchato PRIMA delle include CUDA:
+            // così l'include guard evita il parsing della versione originale incompatibile.
+            nvcc_args.push("--pre-include".to_string());
+            nvcc_args.push(patched_header.to_string_lossy().to_string());
         }
     }
 
@@ -87,7 +89,7 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=stdc++");
 }
 
-fn create_cuda_math_compat_include(out_dir: &PathBuf) -> Option<PathBuf> {
+fn create_cuda_math_compat_header(out_dir: &PathBuf) -> Option<PathBuf> {
     let candidates = [
         "/usr/local/cuda/targets/x86_64-linux/include/crt/math_functions.h",
         "/usr/local/cuda/include/crt/math_functions.h",
@@ -129,13 +131,12 @@ fn create_cuda_math_compat_include(out_dir: &PathBuf) -> Option<PathBuf> {
     }
 
     let compat_dir = out_dir.join("cuda_compat");
-    let crt_dir = compat_dir.join("crt");
-    if fs::create_dir_all(&crt_dir).is_err() {
+    if fs::create_dir_all(&compat_dir).is_err() {
         return None;
     }
-    let dst = crt_dir.join("math_functions.h");
+    let dst = compat_dir.join("math_functions_patched.h");
     if fs::write(&dst, patched).is_err() {
         return None;
     }
-    Some(compat_dir)
+    Some(dst)
 }
