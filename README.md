@@ -37,7 +37,15 @@ Repository con due progetti separati per InitVerse (inihash / VersaHash):
 
 # Release gpuminer con backend CUDA (richiede nvcc)
 ./build-linux.sh release x86_64-unknown-linux-gnu gpuminer cuda
+
+# Se nvcc rifiuta GCC troppo nuovo:
+NVCC_CCBIN=/usr/bin/gcc-13 ./build-linux.sh release x86_64-unknown-linux-gnu gpuminer cuda
 ```
+
+Note CUDA toolchain:
+- di default il build script abilita `-allow-unsupported-compiler` per `nvcc`.
+- puoi disattivarlo con `GPUMINER_NVCC_ALLOW_UNSUPPORTED=0`.
+- puoi forzare il compilatore host con `NVCC_CCBIN=/path/to/gcc-13`.
 
 Il binario sarà disponibile in:
 - `target/<target-triple>/release/cpuminer` (release CPU)
