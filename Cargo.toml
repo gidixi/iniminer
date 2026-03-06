@@ -1,0 +1,27 @@
+[package]
+name = "inihash-miner"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "miner"
+path = "src/main.rs"
+
+[dependencies]
+sha2      = "0.10"
+sha3      = "0.10"
+hmac      = "0.12"
+# arithmetic + expose-field: abilita FieldElement (sqrt), ProjectivePoint, Scalar
+k256      = { version = "0.13", features = ["arithmetic", "expose-field"] }
+hex       = "0.4"
+serde     = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest   = { version = "0.12", features = ["blocking", "json"] }
+rand      = "0.8"
+anyhow    = "1"
+subtle    = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
