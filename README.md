@@ -1,6 +1,9 @@
-# InitVerse Miner (Rust)
+# InitVerse Miners (Rust)
 
-Miner esterno ad alte prestazioni per InitVerse (inihash / VersaHash) scritto in Rust.
+Repository con due progetti separati per InitVerse (inihash / VersaHash):
+
+- **cpuminer**: miner CPU chain-compatible.
+- **gpuminer**: progetto GPU con backend CUDA (con fallback CPU per correttezza).
 
 ## Caratteristiche
 
@@ -20,75 +23,84 @@ Miner esterno ad alte prestazioni per InitVerse (inihash / VersaHash) scritto in
 ### Build per Linux
 
 ```bash
-# Release (default)
+# Build workspace completo (cpuminer + gpuminer)
 ./build-linux.sh
 
 # Debug
 ./build-linux.sh debug
 
-# Release per target specifico
-./build-linux.sh release x86_64-unknown-linux-gnu
+# Release solo cpuminer
+./build-linux.sh release x86_64-unknown-linux-gnu cpuminer
+
+# Release solo gpuminer
+./build-linux.sh release x86_64-unknown-linux-gnu gpuminer
 ```
 
 Il binario sarà disponibile in:
-- `target/<target-triple>/release/miner` (release)
-- `target/<target-triple>/debug/miner` (debug)
+- `target/<target-triple>/release/cpuminer` (release CPU)
+- `target/<target-triple>/debug/cpuminer` (debug CPU)
+- `target/<target-triple>/release/gpuminer` (release GPU)
+- `target/<target-triple>/debug/gpuminer` (debug GPU)
 
 ### Build manuale
 
 ```bash
-cargo build --release
+cargo build --workspace --release
 ```
 
 ## Utilizzo
 
-### Mining diretto (RPC)
+### cpuminer — Mining diretto (RPC)
 
 Mining diretto tramite nodo InitVerse:
 
 ```bash
-miner [RPC_URL] [THREADS] [EXTRA_NONCE_HEX]
+cpuminer [RPC_URL] [THREADS] [EXTRA_NONCE_HEX]
 ```
 
 **Esempi:**
 
 ```bash
 # Usa il numero di thread disponibili
-miner http://localhost:8545
+cpuminer http://localhost:8545
 
 # Specifica il numero di thread
-miner http://localhost:8545 8
+cpuminer http://localhost:8545 8
 
 # Con extra nonce personalizzato
-miner http://localhost:8545 8 0x1234567890abcdef
+cpuminer http://localhost:8545 8 0x1234567890abcdef
 ```
 
-### Mining pool (Stratum)
+### cpuminer — Mining pool (Stratum)
 
 Mining tramite pool Stratum:
 
 ```bash
-miner stratum+tcp://WALLET.WORKER@host:port [THREADS]
+cpuminer stratum+tcp://WALLET.WORKER@host:port [THREADS]
 ```
 
 **Esempi:**
 
 ```bash
 # Mining pool con thread automatici
-miner stratum+tcp://0x...Wallet.Worker001@pool-a.yatespool.com:31588
+cpuminer stratum+tcp://0x...Wallet.Worker001@pool-a.yatespool.com:31588
 
 # Con numero di thread specificato
-miner stratum+tcp://0x...Wallet.Worker001@pool-a.yatespool.com:31588 8
+cpuminer stratum+tcp://0x...Wallet.Worker001@pool-a.yatespool.com:31588 8
+```
+
+### gpuminer — scansione range nonce
+
+```bash
+gpuminer scan <seal_hash_hex> <extra_nonce_hex> <target_hex> [start_nonce] [count]
 ```
 
 ## Architettura
 
-Il progetto è organizzato in moduli:
+Il repository è organizzato in due crate:
 
-- **`main.rs`**: Entry point e logica principale del miner
-- **`rpc.rs`**: Client JSON-RPC per comunicazione con il nodo InitVerse
-- **`stratum.rs`**: Client Stratum per mining pool
-- **`versahash.rs`**: Implementazione dell'algoritmo VersaHash
+- **`cpuminer/`**: entrypoint CPU + RPC + Stratum.
+- **`gpuminer/`**: entrypoint GPU + interfaccia CUDA (`gpuminer/cuda/kernel.cu`).
 
 ### VersaHash
 

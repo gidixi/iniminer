@@ -1,0 +1,21 @@
+[package]
+name = "cpuminer"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "cpuminer"
+path = "src/main.rs"
+
+[dependencies]
+sha2.workspace = true
+sha3.workspace = true
+hmac.workspace = true
+k256.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+rand.workspace = true
+anyhow.workspace = true
+subtle.workspace = true

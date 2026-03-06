@@ -97,6 +97,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpuminer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "hmac",
+ "k256",
+ "rand 0.8.5",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sha3",
+ "subtle",
+]
+
+[[package]]
 name = "crypto-bigint"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -286,6 +303,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpuminer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "hmac",
+ "k256",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sha3",
+ "subtle",
+]
+
+[[package]]
 name = "group"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -419,23 +452,6 @@ checksum = "634d9b1461af396cad843f47fdba5597a4f9e6ddd4bfb6ff5d85028c25cb12f6"
 dependencies = [
  "unicode-bidi",
  "unicode-normalization",
-]
-
-[[package]]
-name = "inihash-miner"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "hex",
- "hmac",
- "k256",
- "rand 0.8.5",
- "reqwest",
- "serde",
- "serde_json",
- "sha2",
- "sha3",
- "subtle",
 ]
 
 [[package]]
