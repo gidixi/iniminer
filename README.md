@@ -50,6 +50,8 @@ Note CUDA toolchain:
   Disattivalo con `GPUMINER_NVCC_PATCH_MATH_FUNCTIONS=0`.
 - workaround aggiuntivo: `-U_GNU_SOURCE` (ON di default) per evitare prototype GNU in conflitto.
   Disattivalo con `GPUMINER_NVCC_UNDEF_GNU_SOURCE=0`.
+- se il linker non trova `-lcudart`, imposta esplicitamente:
+  `GPUMINER_CUDART_DIR=/usr/local/cuda/targets/x86_64-linux/lib`
 
 Il binario sarà disponibile in:
 - `target/<target-triple>/release/cpuminer` (release CPU)

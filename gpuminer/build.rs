@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -9,6 +10,9 @@ fn main() {
     println!("cargo:rerun-if-env-changed=GPUMINER_NVCC_ALLOW_UNSUPPORTED");
     println!("cargo:rerun-if-env-changed=GPUMINER_NVCC_PATCH_MATH_FUNCTIONS");
     println!("cargo:rerun-if-env-changed=GPUMINER_NVCC_UNDEF_GNU_SOURCE");
+    println!("cargo:rerun-if-env-changed=GPUMINER_CUDART_DIR");
+    println!("cargo:rerun-if-env-changed=CUDA_HOME");
+    println!("cargo:rerun-if-env-changed=CUDA_PATH");
 
     if env::var_os("CARGO_FEATURE_CUDA").is_none() {
         return;
@@ -97,8 +101,116 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", out_dir.display());
     println!("cargo:rustc-link-lib=static=gpuminer_cuda");
-    println!("cargo:rustc-link-lib=dylib=cudart");
+    let link_mode = add_cuda_link_search_paths();
+    match link_mode {
+        CudartLinkMode::Dynamic => {
+            println!("cargo:rustc-link-lib=dylib=cudart");
+        }
+        CudartLinkMode::Static => {
+            println!("cargo:rustc-link-lib=static=cudart_static");
+            println!("cargo:rustc-link-lib=dylib=dl");
+            println!("cargo:rustc-link-lib=dylib=pthread");
+            println!("cargo:rustc-link-lib=dylib=rt");
+        }
+        CudartLinkMode::Unknown => {
+            // Mantiene comportamento storico, ma con warning esplicito.
+            println!("cargo:warning=libcudart non trovata nei path CUDA noti; provo link dinamico standard");
+            println!("cargo:rustc-link-lib=dylib=cudart");
+        }
+    }
     println!("cargo:rustc-link-lib=dylib=stdc++");
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum CudartLinkMode {
+    Dynamic,
+    Static,
+    Unknown,
+}
+
+fn add_cuda_link_search_paths() -> CudartLinkMode {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+
+    // Override esplicito: directory che contiene libcudart.so / libcudart_static.a
+    if let Ok(d) = env::var("GPUMINER_CUDART_DIR") {
+        if !d.is_empty() {
+            dirs.push(PathBuf::from(d));
+        }
+    }
+
+    // CUDA roots comuni
+    for var in ["CUDA_HOME", "CUDA_PATH"] {
+        if let Ok(root) = env::var(var) {
+            if !root.is_empty() {
+                let r = PathBuf::from(root);
+                dirs.push(r.join("lib64"));
+                dirs.push(r.join("targets/x86_64-linux/lib"));
+                dirs.push(r.join("lib"));
+            }
+        }
+    }
+
+    // Default toolkit path
+    let default_root = PathBuf::from("/usr/local/cuda");
+    dirs.push(default_root.join("lib64"));
+    dirs.push(default_root.join("targets/x86_64-linux/lib"));
+    dirs.push(default_root.join("lib"));
+
+    // Versioned toolkits: /usr/local/cuda-*
+    if let Ok(entries) = fs::read_dir("/usr/local") {
+        for e in entries.flatten() {
+            let p = e.path();
+            if let Some(name) = p.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with("cuda-") {
+                    dirs.push(p.join("lib64"));
+                    dirs.push(p.join("targets/x86_64-linux/lib"));
+                    dirs.push(p.join("lib"));
+                }
+            }
+        }
+    }
+
+    // Dedup + output link-search path esistenti
+    let mut uniq: Vec<PathBuf> = Vec::new();
+    for d in dirs {
+        if d.exists() && !uniq.iter().any(|u| u == &d) {
+            println!("cargo:rustc-link-search=native={}", d.display());
+            uniq.push(d);
+        }
+    }
+
+    let mut has_dynamic = false;
+    let mut has_static = false;
+    for d in &uniq {
+        if directory_has_prefix(d, "libcudart.so") {
+            has_dynamic = true;
+        }
+        if d.join("libcudart_static.a").exists() {
+            has_static = true;
+        }
+    }
+
+    if has_dynamic {
+        CudartLinkMode::Dynamic
+    } else if has_static {
+        CudartLinkMode::Static
+    } else {
+        CudartLinkMode::Unknown
+    }
+}
+
+fn directory_has_prefix(dir: &Path, prefix: &str) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    for e in entries.flatten() {
+        if let Some(name) = e.file_name().to_str() {
+            if name.starts_with(prefix) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn create_cuda_math_compat_header(out_dir: &PathBuf) -> Option<PathBuf> {
