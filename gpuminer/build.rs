@@ -8,6 +8,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=NVCC_CCBIN");
     println!("cargo:rerun-if-env-changed=GPUMINER_NVCC_ALLOW_UNSUPPORTED");
     println!("cargo:rerun-if-env-changed=GPUMINER_NVCC_PATCH_MATH_FUNCTIONS");
+    println!("cargo:rerun-if-env-changed=GPUMINER_NVCC_UNDEF_GNU_SOURCE");
 
     if env::var_os("CARGO_FEATURE_CUDA").is_none() {
         return;
@@ -47,6 +48,17 @@ fn main() {
             nvcc_args.push("-ccbin".to_string());
             nvcc_args.push(ccbin);
         }
+    }
+
+    // Evita che glibc esponga le prototype GNU cospi/sinpi che confliggono
+    // con quelle CUDA su alcune combinazioni toolkit/glibc.
+    let undef_gnu_source = env::var("GPUMINER_NVCC_UNDEF_GNU_SOURCE")
+        .map(|v| v != "0")
+        .unwrap_or(true);
+    if undef_gnu_source {
+        nvcc_args.push("-U_GNU_SOURCE".to_string());
+        nvcc_args.push("-Xcompiler".to_string());
+        nvcc_args.push("-U_GNU_SOURCE".to_string());
     }
 
     // Workaround glibc/cuda header incompatibility (sinpi/cospi noexcept mismatch).

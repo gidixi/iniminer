@@ -48,6 +48,8 @@ Note CUDA toolchain:
 - puoi forzare il compilatore host con `NVCC_CCBIN=/path/to/gcc-13`.
 - workaround automatico per errori `sinpi/cospi noexcept` (glibc/CUDA): ON di default.
   Disattivalo con `GPUMINER_NVCC_PATCH_MATH_FUNCTIONS=0`.
+- workaround aggiuntivo: `-U_GNU_SOURCE` (ON di default) per evitare prototype GNU in conflitto.
+  Disattivalo con `GPUMINER_NVCC_UNDEF_GNU_SOURCE=0`.
 
 Il binario sarà disponibile in:
 - `target/<target-triple>/release/cpuminer` (release CPU)
