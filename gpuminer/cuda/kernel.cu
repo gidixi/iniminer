@@ -585,6 +585,9 @@ extern "C" int gpuminer_prepare_batch_cuda(const uint8_t* header_hash,
     if (!header_hash || !extra_nonce || !out_key_hashes || !out_sign_data_hashes) return -1;
     if (count == 0) return 0;
 
+    constexpr int threads = 128;
+    const int blocks = static_cast<int>((count + threads - 1) / threads);
+
     uint8_t* d_header = nullptr;
     uint8_t* d_extra = nullptr;
     uint8_t* d_key = nullptr;
@@ -601,8 +604,6 @@ extern "C" int gpuminer_prepare_batch_cuda(const uint8_t* header_hash,
     st = cudaMemcpy(d_extra, extra_nonce, 8, cudaMemcpyHostToDevice);
     if (st != cudaSuccess) goto fail;
 
-    constexpr int threads = 128;
-    const int blocks = static_cast<int>((count + threads - 1) / threads);
     gpuminer_prepare_batch_kernel<<<blocks, threads>>>(d_header, d_extra, start_nonce, count, d_key, d_sign);
     st = cudaGetLastError(); if (st != cudaSuccess) goto fail;
     st = cudaDeviceSynchronize(); if (st != cudaSuccess) goto fail;
@@ -632,6 +633,9 @@ extern "C" int gpuminer_scan_nonces_cuda_full(const uint8_t* header_hash,
     *found_nonce = 0;
     if (count == 0) return 0;
 
+    constexpr int threads = 64;
+    const int blocks = static_cast<int>((count + threads - 1) / threads);
+
     uint8_t *d_header = nullptr, *d_extra = nullptr, *d_target = nullptr;
     uint64_t *d_found_nonce = nullptr;
     int *d_found = nullptr;
@@ -657,8 +661,6 @@ extern "C" int gpuminer_scan_nonces_cuda_full(const uint8_t* header_hash,
     st = cudaMemset(d_found_nonce, 0, sizeof(uint64_t));
     if (st != cudaSuccess) goto fail;
 
-    constexpr int threads = 64;
-    const int blocks = static_cast<int>((count + threads - 1) / threads);
     gpuminer_full_scan_kernel<<<blocks, threads>>>(d_header, d_extra, start_nonce, count, d_target, d_found_nonce, d_found);
     st = cudaGetLastError(); if (st != cudaSuccess) goto fail;
     st = cudaDeviceSynchronize(); if (st != cudaSuccess) goto fail;

@@ -46,6 +46,8 @@ Note CUDA toolchain:
 - di default il build script abilita `-allow-unsupported-compiler` per `nvcc`.
 - puoi disattivarlo con `GPUMINER_NVCC_ALLOW_UNSUPPORTED=0`.
 - puoi forzare il compilatore host con `NVCC_CCBIN=/path/to/gcc-13`.
+- workaround automatico per errori `sinpi/cospi noexcept` (glibc/CUDA): ON di default.
+  Disattivalo con `GPUMINER_NVCC_PATCH_MATH_FUNCTIONS=0`.
 
 Il binario sarà disponibile in:
 - `target/<target-triple>/release/cpuminer` (release CPU)

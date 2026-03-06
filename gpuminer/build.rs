@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -6,6 +7,7 @@ fn main() {
     println!("cargo:rerun-if-changed=cuda/kernel.cu");
     println!("cargo:rerun-if-env-changed=NVCC_CCBIN");
     println!("cargo:rerun-if-env-changed=GPUMINER_NVCC_ALLOW_UNSUPPORTED");
+    println!("cargo:rerun-if-env-changed=GPUMINER_NVCC_PATCH_MATH_FUNCTIONS");
 
     if env::var_os("CARGO_FEATURE_CUDA").is_none() {
         return;
@@ -47,6 +49,18 @@ fn main() {
         }
     }
 
+    // Workaround glibc/cuda header incompatibility (sinpi/cospi noexcept mismatch).
+    // Se abilitato, crea un override locale di crt/math_functions.h con noexcept allineato.
+    let patch_math = env::var("GPUMINER_NVCC_PATCH_MATH_FUNCTIONS")
+        .map(|v| v != "0")
+        .unwrap_or(true);
+    if patch_math {
+        if let Some(compat_dir) = create_cuda_math_compat_include(&out_dir) {
+            nvcc_args.push("-I".to_string());
+            nvcc_args.push(compat_dir.to_string_lossy().to_string());
+        }
+    }
+
     let status = Command::new("nvcc")
         .args(nvcc_args)
         .status()
@@ -71,4 +85,57 @@ fn main() {
     println!("cargo:rustc-link-lib=static=gpuminer_cuda");
     println!("cargo:rustc-link-lib=dylib=cudart");
     println!("cargo:rustc-link-lib=dylib=stdc++");
+}
+
+fn create_cuda_math_compat_include(out_dir: &PathBuf) -> Option<PathBuf> {
+    let candidates = [
+        "/usr/local/cuda/targets/x86_64-linux/include/crt/math_functions.h",
+        "/usr/local/cuda/include/crt/math_functions.h",
+    ];
+    let src = candidates
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.exists())?;
+
+    let text = fs::read_to_string(&src).ok()?;
+    let mut changed = false;
+    let mut patched = String::with_capacity(text.len() + 256);
+
+    for line in text.lines() {
+        let needs_patch = line.contains("__device_builtin__")
+            && (line.contains(" sinpi(")
+                || line.contains(" cospi(")
+                || line.contains(" sinpif(")
+                || line.contains(" cospif("))
+            && !line.contains("noexcept");
+        if needs_patch {
+            if let Some(idx) = line.rfind(';') {
+                let mut s = String::with_capacity(line.len() + 18);
+                s.push_str(&line[..idx]);
+                s.push_str(" noexcept (true)");
+                s.push(';');
+                patched.push_str(&s);
+                patched.push('\n');
+                changed = true;
+                continue;
+            }
+        }
+        patched.push_str(line);
+        patched.push('\n');
+    }
+
+    if !changed {
+        return None;
+    }
+
+    let compat_dir = out_dir.join("cuda_compat");
+    let crt_dir = compat_dir.join("crt");
+    if fs::create_dir_all(&crt_dir).is_err() {
+        return None;
+    }
+    let dst = crt_dir.join("math_functions.h");
+    if fs::write(&dst, patched).is_err() {
+        return None;
+    }
+    Some(compat_dir)
 }
