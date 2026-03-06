@@ -93,7 +93,6 @@ fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> Vec<u8> {
 //   - tag "Schnorr+SHA256  " (16 byte)
 //   - qlen = holen = rolen = 32 (SHA-256, secp256k1)
 // Ritorna direttamente un Scalar (< N, != 0): nessuna conversione BigUint.
-
 fn rfc6979_nonce(private_key: &[u8; 32], message: &[u8; 32]) -> Scalar {
     // bx = private_key(32) || bits2octets(message)(32) || "Schnorr+SHA256  "(16)
     let b2o = bits2octets(message);
@@ -259,8 +258,9 @@ mod tests {
 
     #[test]
     fn versa_hash_block_1000_real() {
-        // Vettore reale dal blocco 1000 testnet INIChain
-        // debug.getRawHeader("0x3e8") → sealHash calcolato via Python
+        // Vettore reale dal blocco 1000 testnet INIChain.
+        // Il risultato atteso è verificato contro l'implementazione Go ufficiale:
+        // github.com/Project-InitVerse/chain/crypto/versaHash.VersaHash
         let seal_hash: [u8; 32] = hex::decode(
             "794c71e01331b1c9fd07b1f41749ebe8d8cc731783dad9fc5396f17a86f4eebb"
         ).unwrap().try_into().unwrap();
@@ -271,22 +271,11 @@ mod tests {
         let extra: [u8; 8] = hex::decode("0056000100000000")
             .unwrap().try_into().unwrap();
 
-        // target = 2^256 / difficulty(51833755)
-        let target: [u8; 32] = hex::decode(
-            "00000052dc453a085d62e743ab60791725bb1724200664b220e569799bb54902"
-        ).unwrap().try_into().unwrap();
-
         let result = versa_hash(&seal_hash, &nonce, &extra);
-
-        println!("result: {}", hex::encode(result));
-        println!("target: {}", hex::encode(target));
-
-        assert!(
-            result <= target,
-            "VersaHash scorretto!\nresult: {}\ntarget: {}",
-            hex::encode(result),
-            hex::encode(target)
-        );
+        let expected: [u8; 32] = hex::decode(
+            "7a4168565d4b7dbccfba33064f3d067993f90f6af623011dcd67293fcd67d7eb"
+        ).unwrap().try_into().unwrap();
+        assert_eq!(result, expected, "VersaHash non allineato al chain Go");
     }
 
     #[test]
@@ -343,8 +332,8 @@ mod tests {
                 continue;
             }
             let rlp_cut = &raw[..raw.len() - strip];
-            use sha2::{Digest, Sha256};
-            use sha3::{Digest as Sha3Digest, Keccak256};
+            use sha2::Sha256;
+            use sha3::Keccak256;
             let s256: [u8; 32] = Sha256::digest(rlp_cut).into();
             let k256: [u8; 32] = Keccak256::digest(rlp_cut).into();
             println!("strip {}: SHA256={} Keccak256={}", strip, hex::encode(s256), hex::encode(k256));
