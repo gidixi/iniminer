@@ -57,7 +57,7 @@ fn scan_nonces_cuda_hybrid(
     count: u64,
     target: &[u8; 32],
 ) -> Result<Option<u64>, i32> {
-    let batch = env_u64("GPUMINER_CUDA_HYBRID_CHUNK", 8_192);
+    let batch = env_u64("GPUMINER_CUDA_HYBRID_CHUNK", 32_768);
 
     let mut scanned = 0_u64;
     while scanned < count {
@@ -106,7 +106,7 @@ fn scan_nonces_cuda_full(
     count: u64,
     target: &[u8; 32],
 ) -> Result<Option<u64>, i32> {
-    let batch = env_u64("GPUMINER_CUDA_FULL_CHUNK", 2_048);
+    let batch = env_u64("GPUMINER_CUDA_FULL_CHUNK", 16_384);
     let mut scanned = 0_u64;
     while scanned < count {
         let this_count = (count - scanned).min(batch);

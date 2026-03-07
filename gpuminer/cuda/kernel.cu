@@ -1,6 +1,7 @@
 #include <cuda_runtime.h>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 
 namespace {
 
@@ -12,6 +13,85 @@ inline int fail_cuda(const char *fn, int stage, cudaError_t st) {
                  static_cast<int>(st),
                  cudaGetErrorString(st));
     return -(stage * 1000 + static_cast<int>(st));
+}
+
+struct PrepareState {
+    uint8_t* d_header = nullptr;
+    uint8_t* d_extra = nullptr;
+    uint8_t* d_key = nullptr;
+    uint8_t* d_sign = nullptr;
+    size_t batch_bytes_cap = 0;
+    bool has_cached_inputs = false;
+    uint8_t cached_header[32] = {0};
+    uint8_t cached_extra[8] = {0};
+};
+
+struct FullState {
+    uint8_t* d_header = nullptr;
+    uint8_t* d_extra = nullptr;
+    uint8_t* d_target = nullptr;
+    uint64_t* d_found_nonce = nullptr;
+    int* d_found = nullptr;
+    bool has_cached_inputs = false;
+    uint8_t cached_header[32] = {0};
+    uint8_t cached_extra[8] = {0};
+    uint8_t cached_target[32] = {0};
+};
+
+static PrepareState g_prepare_state;
+static FullState g_full_state;
+
+inline cudaError_t ensure_prepare_buffers(size_t batch_bytes) {
+    cudaError_t st;
+
+    if (g_prepare_state.d_header == nullptr) {
+        st = cudaMalloc(&g_prepare_state.d_header, 32);
+        if (st != cudaSuccess) return st;
+    }
+    if (g_prepare_state.d_extra == nullptr) {
+        st = cudaMalloc(&g_prepare_state.d_extra, 8);
+        if (st != cudaSuccess) return st;
+    }
+
+    if (g_prepare_state.batch_bytes_cap < batch_bytes) {
+        if (g_prepare_state.d_key != nullptr) cudaFree(g_prepare_state.d_key);
+        if (g_prepare_state.d_sign != nullptr) cudaFree(g_prepare_state.d_sign);
+        g_prepare_state.d_key = nullptr;
+        g_prepare_state.d_sign = nullptr;
+
+        st = cudaMalloc(&g_prepare_state.d_key, batch_bytes);
+        if (st != cudaSuccess) return st;
+        st = cudaMalloc(&g_prepare_state.d_sign, batch_bytes);
+        if (st != cudaSuccess) return st;
+        g_prepare_state.batch_bytes_cap = batch_bytes;
+    }
+    return cudaSuccess;
+}
+
+inline cudaError_t ensure_full_buffers() {
+    cudaError_t st;
+
+    if (g_full_state.d_header == nullptr) {
+        st = cudaMalloc(&g_full_state.d_header, 32);
+        if (st != cudaSuccess) return st;
+    }
+    if (g_full_state.d_extra == nullptr) {
+        st = cudaMalloc(&g_full_state.d_extra, 8);
+        if (st != cudaSuccess) return st;
+    }
+    if (g_full_state.d_target == nullptr) {
+        st = cudaMalloc(&g_full_state.d_target, 32);
+        if (st != cudaSuccess) return st;
+    }
+    if (g_full_state.d_found_nonce == nullptr) {
+        st = cudaMalloc(&g_full_state.d_found_nonce, sizeof(uint64_t));
+        if (st != cudaSuccess) return st;
+    }
+    if (g_full_state.d_found == nullptr) {
+        st = cudaMalloc(&g_full_state.d_found, sizeof(int));
+        if (st != cudaSuccess) return st;
+    }
+    return cudaSuccess;
 }
 
 struct U256 {
@@ -596,59 +676,45 @@ extern "C" int gpuminer_prepare_batch_cuda(const uint8_t* header_hash,
     if (!header_hash || !extra_nonce || !out_key_hashes || !out_sign_data_hashes) return -1;
     if (count == 0) return 0;
 
-    constexpr int threads = 128;
+    constexpr int threads = 256;
     const int blocks = static_cast<int>((count + threads - 1) / threads);
-
-    uint8_t* d_header = nullptr;
-    uint8_t* d_extra = nullptr;
-    uint8_t* d_key = nullptr;
-    uint8_t* d_sign = nullptr;
     const size_t batch_bytes = static_cast<size_t>(count) * 32ULL;
+    cudaError_t st = ensure_prepare_buffers(batch_bytes);
+    if (st != cudaSuccess) return fail_cuda("prepare_batch", 1, st);
 
-    cudaError_t st_alloc = cudaMalloc(&d_header, 32);
-    if (st_alloc != cudaSuccess) return fail_cuda("prepare_batch", 1, st_alloc);
-    st_alloc = cudaMalloc(&d_extra, 8);
-    if (st_alloc != cudaSuccess) { cudaFree(d_header); return fail_cuda("prepare_batch", 2, st_alloc); }
-    st_alloc = cudaMalloc(&d_key, batch_bytes);
-    if (st_alloc != cudaSuccess) { cudaFree(d_header); cudaFree(d_extra); return fail_cuda("prepare_batch", 3, st_alloc); }
-    st_alloc = cudaMalloc(&d_sign, batch_bytes);
-    if (st_alloc != cudaSuccess) { cudaFree(d_header); cudaFree(d_extra); cudaFree(d_key); return fail_cuda("prepare_batch", 4, st_alloc); }
+    if (!g_prepare_state.has_cached_inputs ||
+        std::memcmp(g_prepare_state.cached_header, header_hash, 32) != 0) {
+        st = cudaMemcpy(g_prepare_state.d_header, header_hash, 32, cudaMemcpyHostToDevice);
+        if (st != cudaSuccess) return fail_cuda("prepare_batch", 10, st);
+        std::memcpy(g_prepare_state.cached_header, header_hash, 32);
+    }
+    if (!g_prepare_state.has_cached_inputs ||
+        std::memcmp(g_prepare_state.cached_extra, extra_nonce, 8) != 0) {
+        st = cudaMemcpy(g_prepare_state.d_extra, extra_nonce, 8, cudaMemcpyHostToDevice);
+        if (st != cudaSuccess) return fail_cuda("prepare_batch", 11, st);
+        std::memcpy(g_prepare_state.cached_extra, extra_nonce, 8);
+    }
+    g_prepare_state.has_cached_inputs = true;
 
-    cudaError_t st = cudaMemcpy(d_header, header_hash, 32, cudaMemcpyHostToDevice);
-    if (st != cudaSuccess) goto fail_10;
-    st = cudaMemcpy(d_extra, extra_nonce, 8, cudaMemcpyHostToDevice);
-    if (st != cudaSuccess) goto fail_11;
+    gpuminer_prepare_batch_kernel<<<blocks, threads>>>(
+        g_prepare_state.d_header,
+        g_prepare_state.d_extra,
+        start_nonce,
+        count,
+        g_prepare_state.d_key,
+        g_prepare_state.d_sign);
 
-    gpuminer_prepare_batch_kernel<<<blocks, threads>>>(d_header, d_extra, start_nonce, count, d_key, d_sign);
-    st = cudaGetLastError(); if (st != cudaSuccess) goto fail_12;
-    st = cudaDeviceSynchronize(); if (st != cudaSuccess) goto fail_13;
+    st = cudaGetLastError();
+    if (st != cudaSuccess) return fail_cuda("prepare_batch", 12, st);
+    st = cudaDeviceSynchronize();
+    if (st != cudaSuccess) return fail_cuda("prepare_batch", 13, st);
 
-    st = cudaMemcpy(out_key_hashes, d_key, batch_bytes, cudaMemcpyDeviceToHost);
-    if (st != cudaSuccess) goto fail_14;
-    st = cudaMemcpy(out_sign_data_hashes, d_sign, batch_bytes, cudaMemcpyDeviceToHost);
-    if (st != cudaSuccess) goto fail_15;
+    st = cudaMemcpy(out_key_hashes, g_prepare_state.d_key, batch_bytes, cudaMemcpyDeviceToHost);
+    if (st != cudaSuccess) return fail_cuda("prepare_batch", 14, st);
+    st = cudaMemcpy(out_sign_data_hashes, g_prepare_state.d_sign, batch_bytes, cudaMemcpyDeviceToHost);
+    if (st != cudaSuccess) return fail_cuda("prepare_batch", 15, st);
 
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_key); cudaFree(d_sign);
     return 0;
-
-fail_10:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_key); cudaFree(d_sign);
-    return fail_cuda("prepare_batch", 10, st);
-fail_11:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_key); cudaFree(d_sign);
-    return fail_cuda("prepare_batch", 11, st);
-fail_12:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_key); cudaFree(d_sign);
-    return fail_cuda("prepare_batch", 12, st);
-fail_13:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_key); cudaFree(d_sign);
-    return fail_cuda("prepare_batch", 13, st);
-fail_14:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_key); cudaFree(d_sign);
-    return fail_cuda("prepare_batch", 14, st);
-fail_15:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_key); cudaFree(d_sign);
-    return fail_cuda("prepare_batch", 15, st);
 }
 
 extern "C" int gpuminer_scan_nonces_cuda_full(const uint8_t* header_hash,
@@ -663,78 +729,55 @@ extern "C" int gpuminer_scan_nonces_cuda_full(const uint8_t* header_hash,
     *found_nonce = 0;
     if (count == 0) return 0;
 
-    constexpr int threads = 64;
+    constexpr int threads = 128;
     const int blocks = static_cast<int>((count + threads - 1) / threads);
+    cudaError_t st = ensure_full_buffers();
+    if (st != cudaSuccess) return fail_cuda("scan_full", 1, st);
 
-    uint8_t *d_header = nullptr, *d_extra = nullptr, *d_target = nullptr;
-    uint64_t *d_found_nonce = nullptr;
-    int *d_found = nullptr;
-
-    cudaError_t st_alloc = cudaMalloc(&d_header, 32);
-    if (st_alloc != cudaSuccess) return fail_cuda("scan_full", 1, st_alloc);
-    st_alloc = cudaMalloc(&d_extra, 8);
-    if (st_alloc != cudaSuccess) { cudaFree(d_header); return fail_cuda("scan_full", 2, st_alloc); }
-    st_alloc = cudaMalloc(&d_target, 32);
-    if (st_alloc != cudaSuccess) { cudaFree(d_header); cudaFree(d_extra); return fail_cuda("scan_full", 3, st_alloc); }
-    st_alloc = cudaMalloc(&d_found_nonce, sizeof(uint64_t));
-    if (st_alloc != cudaSuccess) {
-        cudaFree(d_header); cudaFree(d_extra); cudaFree(d_target); return fail_cuda("scan_full", 4, st_alloc);
+    if (!g_full_state.has_cached_inputs ||
+        std::memcmp(g_full_state.cached_header, header_hash, 32) != 0) {
+        st = cudaMemcpy(g_full_state.d_header, header_hash, 32, cudaMemcpyHostToDevice);
+        if (st != cudaSuccess) return fail_cuda("scan_full", 10, st);
+        std::memcpy(g_full_state.cached_header, header_hash, 32);
     }
-    st_alloc = cudaMalloc(&d_found, sizeof(int));
-    if (st_alloc != cudaSuccess) {
-        cudaFree(d_header); cudaFree(d_extra); cudaFree(d_target); cudaFree(d_found_nonce); return fail_cuda("scan_full", 5, st_alloc);
+    if (!g_full_state.has_cached_inputs ||
+        std::memcmp(g_full_state.cached_extra, extra_nonce, 8) != 0) {
+        st = cudaMemcpy(g_full_state.d_extra, extra_nonce, 8, cudaMemcpyHostToDevice);
+        if (st != cudaSuccess) return fail_cuda("scan_full", 11, st);
+        std::memcpy(g_full_state.cached_extra, extra_nonce, 8);
     }
+    if (!g_full_state.has_cached_inputs ||
+        std::memcmp(g_full_state.cached_target, target, 32) != 0) {
+        st = cudaMemcpy(g_full_state.d_target, target, 32, cudaMemcpyHostToDevice);
+        if (st != cudaSuccess) return fail_cuda("scan_full", 12, st);
+        std::memcpy(g_full_state.cached_target, target, 32);
+    }
+    g_full_state.has_cached_inputs = true;
 
-    cudaError_t st = cudaMemcpy(d_header, header_hash, 32, cudaMemcpyHostToDevice);
-    if (st != cudaSuccess) goto fail_10;
-    st = cudaMemcpy(d_extra, extra_nonce, 8, cudaMemcpyHostToDevice);
-    if (st != cudaSuccess) goto fail_11;
-    st = cudaMemcpy(d_target, target, 32, cudaMemcpyHostToDevice);
-    if (st != cudaSuccess) goto fail_12;
-    st = cudaMemset(d_found, 0, sizeof(int));
-    if (st != cudaSuccess) goto fail_13;
-    st = cudaMemset(d_found_nonce, 0, sizeof(uint64_t));
-    if (st != cudaSuccess) goto fail_14;
+    st = cudaMemset(g_full_state.d_found, 0, sizeof(int));
+    if (st != cudaSuccess) return fail_cuda("scan_full", 13, st);
+    st = cudaMemset(g_full_state.d_found_nonce, 0, sizeof(uint64_t));
+    if (st != cudaSuccess) return fail_cuda("scan_full", 14, st);
 
-    gpuminer_full_scan_kernel<<<blocks, threads>>>(d_header, d_extra, start_nonce, count, d_target, d_found_nonce, d_found);
-    st = cudaGetLastError(); if (st != cudaSuccess) goto fail_15;
-    st = cudaDeviceSynchronize(); if (st != cudaSuccess) goto fail_16;
+    gpuminer_full_scan_kernel<<<blocks, threads>>>(
+        g_full_state.d_header,
+        g_full_state.d_extra,
+        start_nonce,
+        count,
+        g_full_state.d_target,
+        g_full_state.d_found_nonce,
+        g_full_state.d_found);
+    st = cudaGetLastError();
+    if (st != cudaSuccess) return fail_cuda("scan_full", 15, st);
+    st = cudaDeviceSynchronize();
+    if (st != cudaSuccess) return fail_cuda("scan_full", 16, st);
 
-    st = cudaMemcpy(found, d_found, sizeof(int), cudaMemcpyDeviceToHost);
-    if (st != cudaSuccess) goto fail_17;
+    st = cudaMemcpy(found, g_full_state.d_found, sizeof(int), cudaMemcpyDeviceToHost);
+    if (st != cudaSuccess) return fail_cuda("scan_full", 17, st);
     if (*found == 1) {
-        st = cudaMemcpy(found_nonce, d_found_nonce, sizeof(uint64_t), cudaMemcpyDeviceToHost);
-        if (st != cudaSuccess) goto fail_18;
+        st = cudaMemcpy(found_nonce, g_full_state.d_found_nonce, sizeof(uint64_t), cudaMemcpyDeviceToHost);
+        if (st != cudaSuccess) return fail_cuda("scan_full", 18, st);
     }
 
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_target); cudaFree(d_found_nonce); cudaFree(d_found);
     return 0;
-
-fail_10:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_target); cudaFree(d_found_nonce); cudaFree(d_found);
-    return fail_cuda("scan_full", 10, st);
-fail_11:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_target); cudaFree(d_found_nonce); cudaFree(d_found);
-    return fail_cuda("scan_full", 11, st);
-fail_12:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_target); cudaFree(d_found_nonce); cudaFree(d_found);
-    return fail_cuda("scan_full", 12, st);
-fail_13:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_target); cudaFree(d_found_nonce); cudaFree(d_found);
-    return fail_cuda("scan_full", 13, st);
-fail_14:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_target); cudaFree(d_found_nonce); cudaFree(d_found);
-    return fail_cuda("scan_full", 14, st);
-fail_15:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_target); cudaFree(d_found_nonce); cudaFree(d_found);
-    return fail_cuda("scan_full", 15, st);
-fail_16:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_target); cudaFree(d_found_nonce); cudaFree(d_found);
-    return fail_cuda("scan_full", 16, st);
-fail_17:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_target); cudaFree(d_found_nonce); cudaFree(d_found);
-    return fail_cuda("scan_full", 17, st);
-fail_18:
-    cudaFree(d_header); cudaFree(d_extra); cudaFree(d_target); cudaFree(d_found_nonce); cudaFree(d_found);
-    return fail_cuda("scan_full", 18, st);
 }
