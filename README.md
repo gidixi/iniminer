@@ -52,6 +52,9 @@ Note CUDA toolchain:
   Disattivalo con `GPUMINER_NVCC_UNDEF_GNU_SOURCE=0`.
 - se il linker non trova `-lcudart`, imposta esplicitamente:
   `GPUMINER_CUDART_DIR=/usr/local/cuda/targets/x86_64-linux/lib`
+- se a runtime ottieni `unsupported toolchain` (CUDA error 222), compila SASS mirata:
+  - `GPUMINER_CUDA_ARCH=sm_86` (sostituisci con la tua compute capability)
+  - oppure `GPUMINER_CUDA_GENCODE="arch=compute_86,code=sm_86"`
 
 Il binario sarà disponibile in:
 - `target/<target-triple>/release/cpuminer` (release CPU)

@@ -13,6 +13,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=GPUMINER_CUDART_DIR");
     println!("cargo:rerun-if-env-changed=CUDA_HOME");
     println!("cargo:rerun-if-env-changed=CUDA_PATH");
+    println!("cargo:rerun-if-env-changed=GPUMINER_CUDA_ARCH");
+    println!("cargo:rerun-if-env-changed=GPUMINER_CUDA_GENCODE");
 
     if env::var_os("CARGO_FEATURE_CUDA").is_none() {
         return;
@@ -51,6 +53,24 @@ fn main() {
         if !ccbin.is_empty() {
             nvcc_args.push("-ccbin".to_string());
             nvcc_args.push(ccbin);
+        }
+    }
+
+    // Permette di forzare codice macchina SASS per una specifica GPU (evita JIT PTX).
+    // Esempio: GPUMINER_CUDA_ARCH=sm_86
+    if let Ok(arch) = env::var("GPUMINER_CUDA_ARCH") {
+        if !arch.is_empty() {
+            nvcc_args.push(format!("-arch={arch}"));
+        }
+    }
+
+    // Supporta uno o più -gencode separati da ';'
+    // Esempio:
+    // GPUMINER_CUDA_GENCODE="arch=compute_86,code=sm_86;arch=compute_89,code=sm_89"
+    if let Ok(specs) = env::var("GPUMINER_CUDA_GENCODE") {
+        for spec in specs.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+            nvcc_args.push("-gencode".to_string());
+            nvcc_args.push(spec.to_string());
         }
     }
 
