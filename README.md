@@ -125,6 +125,9 @@ gpuminer stratum+tcp://WALLET.WORKER@host:port [BATCH_SIZE]
 Con feature CUDA (`--features cuda`) il gpuminer supporta due modalità:
 - `GPUMINER_CUDA_MODE=full` (default): tenta il percorso full-offload su GPU.
 - `GPUMINER_CUDA_MODE=hybrid`: usa pipeline ibrida.
+- tuning chunk (utile su GPU con watchdog):
+  - `GPUMINER_CUDA_FULL_CHUNK` (default `2048`)
+  - `GPUMINER_CUDA_HYBRID_CHUNK` (default `8192`)
 
 Pipeline ibrida:
 - **GPU**: calcolo batch di `first_hash`, `key_hash`, `sign_data = SHA256(key_hash)`.

@@ -41,6 +41,15 @@ fn scan_nonces_cpu_full(
 }
 
 #[cfg(feature = "cuda")]
+fn env_u64(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(default)
+}
+
+#[cfg(feature = "cuda")]
 fn scan_nonces_cuda_hybrid(
     header_hash: &[u8; 32],
     extra_nonce: &[u8; 8],
@@ -48,11 +57,11 @@ fn scan_nonces_cuda_hybrid(
     count: u64,
     target: &[u8; 32],
 ) -> Result<Option<u64>, i32> {
-    const BATCH: u64 = 65_536;
+    let batch = env_u64("GPUMINER_CUDA_HYBRID_CHUNK", 8_192);
 
     let mut scanned = 0_u64;
     while scanned < count {
-        let this_count = (count - scanned).min(BATCH);
+        let this_count = (count - scanned).min(batch);
         let base_nonce = start_nonce.wrapping_add(scanned);
         let mut key_hashes = vec![0_u8; (this_count as usize) * 32];
         let mut sign_data_hashes = vec![0_u8; (this_count as usize) * 32];
@@ -97,27 +106,33 @@ fn scan_nonces_cuda_full(
     count: u64,
     target: &[u8; 32],
 ) -> Result<Option<u64>, i32> {
-    let mut found_nonce = 0_u64;
-    let mut found_flag = 0_i32;
-    let rc = unsafe {
-        gpuminer_scan_nonces_cuda_full(
-            header_hash.as_ptr(),
-            extra_nonce.as_ptr(),
-            start_nonce,
-            count,
-            target.as_ptr(),
-            &mut found_nonce as *mut u64,
-            &mut found_flag as *mut i32,
-        )
-    };
-    if rc != 0 {
-        return Err(rc);
+    let batch = env_u64("GPUMINER_CUDA_FULL_CHUNK", 2_048);
+    let mut scanned = 0_u64;
+    while scanned < count {
+        let this_count = (count - scanned).min(batch);
+        let base_nonce = start_nonce.wrapping_add(scanned);
+        let mut found_nonce = 0_u64;
+        let mut found_flag = 0_i32;
+        let rc = unsafe {
+            gpuminer_scan_nonces_cuda_full(
+                header_hash.as_ptr(),
+                extra_nonce.as_ptr(),
+                base_nonce,
+                this_count,
+                target.as_ptr(),
+                &mut found_nonce as *mut u64,
+                &mut found_flag as *mut i32,
+            )
+        };
+        if rc != 0 {
+            return Err(rc);
+        }
+        if found_flag == 1 {
+            return Ok(Some(found_nonce));
+        }
+        scanned = scanned.wrapping_add(this_count);
     }
-    if found_flag == 1 {
-        Ok(Some(found_nonce))
-    } else {
-        Ok(None)
-    }
+    Ok(None)
 }
 
 pub fn scan_nonces(
